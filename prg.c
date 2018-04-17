@@ -1,20 +1,82 @@
 
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "Raspberry_Pi_2/pi_2_dht_read.h"
 #include "common_dht_read.h"
 
+#define DEFAULT_DHTPIN  7
 
-#define DHTPIN       7
+int convert_str_to_int(const char * str) {
+
+  char * num_end;
+  long value = strtol(str, &num_end, 0);
+
+  if (errno == EINVAL) {
+    fprintf(stderr, "ERROR: Conversion error occurred on '%s': %d\n",
+            str, errno);
+    exit(1);
+  } else if (*num_end != '\0') {
+    fprintf(stderr, "ERROR: It is not a proper number: '%s'\n", str);
+    exit(2);
+  } else if (value < INT_MIN || value > INT_MAX) {
+    fprintf(stderr, "ERROR: Value '%ld' is too big, "
+                    "would overflow an integer.\n", value);
+    exit(2);
+  }
+    
+  return (int) value;
+}
+
+void parse_command_line(int argc, char *const *argv,
+                        int * data_port, int * wait_seconds) {
+
+  int c;
+
+  while ((c = getopt (argc, argv, "p:w:")) != -1)
+    switch (c)
+      {
+      case 'p':
+        *data_port = convert_str_to_int(optarg);
+        break;
+      case 'w':
+        *wait_seconds = convert_str_to_int(optarg);
+        break;
+      case '?':
+        if (optopt == 'p')
+          fprintf (stderr,
+                   "Option -%c requires an argument: the data port in the "
+                   "Raspberry Pi 2/3 where the RHT03/DHT22 comes in.\n",
+                   optopt);
+        else if (optopt == 'w')
+          fprintf (stderr,
+                   "Option -%c requires an argument: the wait time between "
+                   "samples from the RHT03/DHT22.\n", optopt);
+        else if (isprint (optopt))
+          fprintf (stderr, "Unknown option `-%c'.\n", optopt);
+        else
+          fprintf (stderr,
+                   "Unknown option character `\\x%x'.\n",
+                   optopt);
+        break;
+      default:
+        abort ();
+      }
+}
 
 
-int main(int argc, const char * argv[]) {
+int main(int argc, char ** argv) {
 
   int sensor_type = DHT22;
-  int data_pin = DHTPIN;
-  int sampling_delay = 2 * 1000;
+  int data_pin = DEFAULT_DHTPIN;
+  int sampling_delay = 2;
+
+  parse_command_line(argc, argv, &data_pin, &sampling_delay);
 
   while (true) {
 
