@@ -206,19 +206,26 @@ void print_prometheus_labels(FILE *output,
   printf("}");
 }
 
+unsigned long long get_curr_epoch_microsec(void) {
+
+  struct timespec curr_time;
+  clock_gettime(CLOCK_REALTIME, &curr_time);
+
+  unsigned long long epoch_microsec = (
+            (unsigned long long)(curr_time.tv_sec) * 1000000 +
+            (unsigned long long)(curr_time.tv_nsec) / 1000
+  );
+
+  return epoch_microsec;
+}
+
 void dht22_values_to_prometheus(FILE *output,
                                 float dht22_temp, float dht22_humidity,
                                 const struct configuration_settings * config) {
 
   // https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details
 
-  struct timespec curr_time;
-  clock_gettime(CLOCK_REALTIME, &curr_time);
-
-  unsigned long long epoch_millisec = (
-            (unsigned long long)(curr_time.tv_sec) * 1000 +
-            (unsigned long long)(curr_time.tv_nsec) / 1000000
-  );
+  unsigned long long epoch_millisec = get_curr_epoch_microsec() / 1000;
 
   fprintf(output, "# TYPE dht22_temperature gauge\n"
                   "# HELP dht22_temperature Temperature in the RHT03/DHT22 sensor\n"
@@ -247,6 +254,8 @@ int main(int argc, char ** argv) {
 
   while (true) {
 
+    unsigned long long start_epoch_microsec = get_curr_epoch_microsec();
+
     float temperature = 0, relative_humidity = 0;
 
     /* Try to read humidity and temperature from the DHT22 sensor attached
@@ -264,7 +273,12 @@ int main(int argc, char ** argv) {
                                  &actual_config);
     }
 
-    usleep(actual_config.wait_seconds * 1000 * 1000);
+    unsigned long long end_epoch_microsec = get_curr_epoch_microsec();
+
+    // Sleep the wait_seconds, substracting the time spent in the above loop
+    usleep( actual_config.wait_seconds * 1000 * 1000 -
+                (end_epoch_microsec - start_epoch_microsec)
+          );
   }
 
 }
