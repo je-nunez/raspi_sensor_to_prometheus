@@ -16,13 +16,13 @@
 
 
 // Some defaults
-#define DEFAULT_DHTPIN  7
+#define DEFAULT_DHT_GPIO_IDX  17
 #define DEFAULT_WAIT_SECONDS  60
 
 
 // The type specifying the configuration settings for this program
 struct configuration_settings {
-  int data_pin;
+  int dht22_gpio_idx;
   int wait_seconds;
   char ** prometheus_labels;
   int num_prometheus_labels;
@@ -45,7 +45,7 @@ void show_help_and_exit(void) {
                           " (default: %d seconds).\n"
     "     prometheus_label=value...: Prometheus label=value pairs with which to tag "
                                     "the output (default: none).\n",
-    DEFAULT_DHTPIN, DEFAULT_WAIT_SECONDS
+    DEFAULT_DHT_GPIO_IDX, DEFAULT_WAIT_SECONDS
   );
   exit(0);
 }
@@ -157,7 +157,7 @@ void parse_command_line(int argc, char *const *argv,
         show_help_and_exit();
         break;
       case 'p':
-        output_config->data_pin = convert_str_to_int(optarg);
+        output_config->dht22_gpio_idx = convert_str_to_int(optarg);
         break;
       case 'w':
         output_config->wait_seconds = convert_str_to_int(optarg);
@@ -244,24 +244,25 @@ int main(int argc, char ** argv) {
 
   const int sensor_type = DHT22;
   struct configuration_settings actual_config = {
-                                          .data_pin = DEFAULT_DHTPIN,
-                                          .wait_seconds = DEFAULT_WAIT_SECONDS,
-                                          .prometheus_labels = NULL,
-                                          .num_prometheus_labels = 0
-                                        };
+                                        .dht22_gpio_idx = DEFAULT_DHT_GPIO_IDX,
+                                        .wait_seconds = DEFAULT_WAIT_SECONDS,
+                                        .prometheus_labels = NULL,
+                                        .num_prometheus_labels = 0
+                                      };
 
   parse_command_line(argc, argv, &actual_config);
 
+  unsigned long long previous_end_epoch_microsec = get_curr_epoch_microsec();
+
+  float temperature = 0, relative_humidity = 0;
+
   while (true) {
 
-    unsigned long long start_epoch_microsec = get_curr_epoch_microsec();
-
-    float temperature = 0, relative_humidity = 0;
-
     /* Try to read humidity and temperature from the DHT22 sensor attached
-     * to the Raspberry Pi 2/3 at pin data_pin */
+     * to the Raspberry Pi 2/3 at GPIO dht22_gpio_idx */
 
-    int err_code = pi_2_dht_read(sensor_type, actual_config.data_pin,
+    int err_code = pi_2_dht_read(sensor_type,
+		                 actual_config.dht22_gpio_idx,
                                  &relative_humidity, &temperature);
 
     if (err_code != DHT_SUCCESS) {
@@ -274,11 +275,20 @@ int main(int argc, char ** argv) {
     }
 
     unsigned long long end_epoch_microsec = get_curr_epoch_microsec();
+    // USleep wait_seconds, substracting the time spent in the above loop
+    unsigned long long actual_usleep = (
+	             actual_config.wait_seconds * 1000000 -
+                         (end_epoch_microsec - previous_end_epoch_microsec)
+                   );
+    struct timespec sleep_request, sleep_remaining;
+    sleep_request.tv_sec = ( actual_usleep / 1000000 );
+    sleep_request.tv_nsec = ( actual_usleep % 1000000 ) * 1000;
+    nanosleep(&sleep_request, &sleep_remaining);
+    // Note: probably the implementation using a timer_create(2) and
+    // timer_settime(2) is better to establish this output of the metrics
+    // to Prometheus every wait_seconds, instead of using nanosleep().
 
-    // Sleep the wait_seconds, substracting the time spent in the above loop
-    usleep( actual_config.wait_seconds * 1000 * 1000 -
-                (end_epoch_microsec - start_epoch_microsec)
-          );
+    previous_end_epoch_microsec = end_epoch_microsec;
   }
 
 }
