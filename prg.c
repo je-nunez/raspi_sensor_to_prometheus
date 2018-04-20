@@ -34,17 +34,26 @@ void show_help_and_exit(void) {
     "rasppi_dht22_sampler:\n"
     "Take samples from a RHT03/DHT22 sensor attached to a Raspberry Pi 2/3 "
     "to the Prometheus monitoring system's text collector.\n\n"
-    "Command-line invocation:\n"
-    "    [-h] [-p dht22_port] [-w wait_seconds] [prometheus_label=value] ...\n"
+    "Optional command-line arguments:\n"
+    "   [-h] [-p dht22_port] [-w wait_seconds]"
+      " [prometheus_label=\"value\"] ...\n"
     "\n"
-    "Explanation:\n"
+    "Explanation of the optional command-line arguments:\n\n"
     "     -h: show these help messages.\n"
     "     -p dht22_port: the data port by which this Raspberry Pi 2/3 "
                         "communicates with the RHT03/DHT22 (default: %d).\n"
-    "     -w wait_seconds: seconds to wait between consecutive polls from the sensor"
-                          " (default: %d seconds).\n"
-    "     prometheus_label=value...: Prometheus label=value pairs with which to tag "
-                                    "the output (default: none).\n",
+    "     -w wait_seconds: seconds to wait between consecutive polls from "
+                          "the sensor (default: %d seconds).\n"
+    "     prometheus_label=\"value\"...: Prometheus label=\"value\" pairs "
+                          "with which to tag the output (default: none).\n"
+    "                                    (Note: Prometheus requires that the "
+    "value of the label needs to be quoted "
+    "between '\"' double-quotes.\n"
+    "                                     These opening and closing quotes "
+    "need to be given in the command-line argument.\n"
+    "                                     Probably, in a sh- or bash- like "
+    "shell, the whole label=\"value\" needs to be protected thus:\n"
+    "                                        'label=\"value\"'.)\n",
     DEFAULT_DHT_GPIO_IDX, DEFAULT_WAIT_SECONDS
   );
   exit(0);
