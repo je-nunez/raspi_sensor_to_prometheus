@@ -34,6 +34,7 @@
 // The type specifying the configuration settings for this program
 struct configuration_settings {
   int dht22_gpio_idx;
+  bool temperature_in_farenheit;
   int wait_seconds;
   char ** prometheus_labels;
   int num_prometheus_labels;
@@ -46,25 +47,26 @@ void show_help_and_exit(void) {
     "Take samples from a RHT03/DHT22 sensor attached to a Raspberry Pi 2/3 "
     "to the Prometheus monitoring system's text collector.\n\n"
     "Optional command-line arguments:\n"
-    "   [-h] [-g gpio_idx] [-w wait_seconds]"
+    "   [-h] [-f] [-g gpio_idx] [-w wait_seconds]"
       " [prometheus_label=\"value\"] ...\n"
     "\n"
     "Explanation of the optional command-line arguments:\n\n"
     "     -h: show these help messages.\n"
+    "     -f: report temperature in Fahrenheit degrees (default: Celsius).\n"
     "     -g gpio_idx: the GPIO index by which this Raspberry Pi 2/3 "
                       "communicates with the RHT03/DHT22 (default: %d).\n"
     "     -w wait_seconds: seconds to wait between consecutive polls from "
                           "the sensor (default: %d seconds).\n"
     "     prometheus_label=\"value\"...: Prometheus label=\"value\" pairs "
                           "with which to tag the output (default: none).\n"
-    "                                    (Note: Prometheus requires that the "
+    "                                 (Note: Prometheus requires that the "
     "value of the label needs to be quoted "
     "between '\"' double-quotes.\n"
-    "                                     These opening and closing quotes "
+    "                                  These opening and closing quotes "
     "need to be given in the command-line argument.\n"
-    "                                     Probably, in a sh- or bash- like "
+    "                                  Probably, in a sh- or bash- like "
     "shell, the whole label=\"value\" needs to be protected thus:\n"
-    "                                        'label=\"value\"'.)\n",
+    "                                     'label=\"value\"'.)\n",
     DEFAULT_DHT_GPIO_IDX, DEFAULT_WAIT_SECONDS
   );
   exit(0);
@@ -179,11 +181,14 @@ void parse_command_line(int argc, char *const *argv,
 
   int c;
 
-  while ((c = getopt(argc, argv, "hg:w:")) != -1)
+  while ((c = getopt(argc, argv, "hfg:w:")) != -1)
     switch (c)
       {
       case 'h':
         show_help_and_exit();
+        break;
+      case 'f':
+        output_config->temperature_in_farenheit = true;
         break;
       case 'g':
         output_config->dht22_gpio_idx = convert_str_to_int(optarg);
@@ -273,17 +278,28 @@ void dht22_values_to_prometheus(FILE *output,
 
   unsigned long long epoch_millisec = get_curr_epoch_microsec() / 1000;
 
-  fprintf(output, "# TYPE dht22_temperature gauge\n"
-                  "# HELP dht22_temperature Temperature in the RHT03/DHT22 sensor\n"
-                  "dht22_temperature");
-  print_prometheus_labels(output, config);
-  fprintf(output, " %.2f %llu\n", dht22_temp, epoch_millisec);
-
+  // print the relative humidity metric for Prometheus
   fprintf(output, "# TYPE dht22_relat_humidity gauge\n"
-                  "# HELP dht22_relat_humidity Relative humidity in the RHT03/DHT22 sensor\n"
+                  "# HELP dht22_relat_humidity Relative humidity percentage "
+		  "in the RHT03/DHT22 sensor\n"
                   "dht22_relat_humidity");
   print_prometheus_labels(output, config);
   fprintf(output, " %.2f %llu\n", dht22_humidity, epoch_millisec);
+
+  // print the temperature metric for Prometheus: deal with the case whether
+  // report it in the original Celsius degrees, or to convert the Celsius to
+  // Farenheit and report the temperature to Prometheus in Farenheit
+  char * temperature_metric_name = "dht22_temperature_celsius";
+  if (config->temperature_in_farenheit) {
+    temperature_metric_name = "dht22_temperature_farenheit";
+    dht22_temp = dht22_temp * ( 9.0 / 5.0 ) + 32.0;
+  }
+  fprintf(output, "# TYPE %1$s gauge\n"
+                  "# HELP %1$s Temperature in the RHT03/DHT22 sensor\n"
+                  "%1$s",
+                  temperature_metric_name);
+  print_prometheus_labels(output, config);
+  fprintf(output, " %.2f %llu\n", dht22_temp, epoch_millisec);
 }
 
 int main(int argc, char ** argv) {
@@ -291,6 +307,7 @@ int main(int argc, char ** argv) {
   const int sensor_type = DHT22;
   struct configuration_settings actual_config = {
                                         .dht22_gpio_idx = DEFAULT_DHT_GPIO_IDX,
+                                        .temperature_in_farenheit = false,
                                         .wait_seconds = DEFAULT_WAIT_SECONDS,
                                         .prometheus_labels = NULL,
                                         .num_prometheus_labels = 0
