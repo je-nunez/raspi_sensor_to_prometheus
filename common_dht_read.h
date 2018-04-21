@@ -1,3 +1,7 @@
+//
+// From AdaFruit library at:
+// https://github.com/adafruit/Adafruit_Python_DHT/blob/master/source/common_dht_read.h
+
 // Copyright (c) 2014 Adafruit Industries
 // Author: Tony DiCola
 
