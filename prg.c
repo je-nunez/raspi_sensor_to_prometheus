@@ -16,8 +16,18 @@
 
 
 // Some defaults
+// The first one is a default GPIO index (for the mapping of GPIO indexes to
+// physical pin numbers see, e.g.,
+// https://www.raspberrypi.org/forums/viewtopic.php?t=196696 )
 #define DEFAULT_DHT_GPIO_IDX  17
 #define DEFAULT_WAIT_SECONDS  60
+
+#define MIN_GPIO_INDEX  0
+#define MAX_GPIO_INDEX  27
+
+// the minimum sampling rate of the DHT22/RHT03: every 2 seconds
+// ( https://learn.adafruit.com/dht/overview )
+#define MIN_WAIT_SECONDS   2
 
 
 // The type specifying the configuration settings for this program
@@ -35,13 +45,13 @@ void show_help_and_exit(void) {
     "Take samples from a RHT03/DHT22 sensor attached to a Raspberry Pi 2/3 "
     "to the Prometheus monitoring system's text collector.\n\n"
     "Optional command-line arguments:\n"
-    "   [-h] [-p dht22_port] [-w wait_seconds]"
+    "   [-h] [-g gpio_idx] [-w wait_seconds]"
       " [prometheus_label=\"value\"] ...\n"
     "\n"
     "Explanation of the optional command-line arguments:\n\n"
     "     -h: show these help messages.\n"
-    "     -p dht22_port: the data port by which this Raspberry Pi 2/3 "
-                        "communicates with the RHT03/DHT22 (default: %d).\n"
+    "     -g gpio_idx: the GPIO index by which this Raspberry Pi 2/3 "
+                      "communicates with the RHT03/DHT22 (default: %d).\n"
     "     -w wait_seconds: seconds to wait between consecutive polls from "
                           "the sensor (default: %d seconds).\n"
     "     prometheus_label=\"value\"...: Prometheus label=\"value\" pairs "
@@ -159,22 +169,39 @@ void parse_command_line(int argc, char *const *argv,
 
   int c;
 
-  while ((c = getopt(argc, argv, "hp:w:")) != -1)
+  while ((c = getopt(argc, argv, "hg:w:")) != -1)
     switch (c)
       {
       case 'h':
         show_help_and_exit();
         break;
-      case 'p':
+      case 'g':
         output_config->dht22_gpio_idx = convert_str_to_int(optarg);
+        if (output_config->dht22_gpio_idx < MIN_GPIO_INDEX ||
+            output_config->dht22_gpio_idx > MAX_GPIO_INDEX ) {
+               fprintf (stderr,
+                        "ERROR: Invalid GPIO index '%d'. "
+                        "It should be between %d and %d.\n",
+                        output_config->dht22_gpio_idx,
+			MIN_GPIO_INDEX, MAX_GPIO_INDEX);
+               exit(200);
+	}
         break;
       case 'w':
         output_config->wait_seconds = convert_str_to_int(optarg);
+        if (output_config->wait_seconds < MIN_WAIT_SECONDS) {
+               fprintf (stderr,
+                        "ERROR: Invalid sampling wait time '%d'. "
+                        "The minimum allowable value is %d seconds.\n",
+                        output_config->wait_seconds,
+                        MIN_WAIT_SECONDS);
+               exit(200);
+	}
         break;
       case '?':
-        if (optopt == 'p')
+        if (optopt == 'g')
           fprintf (stderr,
-                   "Option -%c requires an argument: the data port in the "
+                   "Option -%c requires an argument: the GPIO index in the "
                    "Raspberry Pi 2/3 where the RHT03/DHT22 comes in.\n",
                    optopt);
         else if (optopt == 'w')
