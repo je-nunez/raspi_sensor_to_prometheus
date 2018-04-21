@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
@@ -90,8 +91,8 @@ int convert_str_to_int(const char * str) {
   return (int) value;
 }
 
-void check_prometheus_label(char * in_string,
-                            struct configuration_settings * output_config) {
+void check_and_save_prometheus_label(char * in_string,
+                              struct configuration_settings * output_config) {
 
   char * equal_separator = index(in_string, '=');
   if (! equal_separator) {
@@ -159,7 +160,16 @@ void check_prometheus_label(char * in_string,
             output_config->num_prometheus_labels * sizeof(char*)
           );
   }
-  // TODO: check extreme cases when output_config->prometheus_labels != NULL
+
+  if (output_config->prometheus_labels == NULL) {
+    int old_errno = errno;
+    char err_msg[256];
+    strerror_r(old_errno, err_msg, sizeof(err_msg));
+    fprintf(stderr, "ERROR: while allocating memory in the heap: %d: %s",
+            old_errno, err_msg);
+    exit(9);
+  }
+  // finally, store the Prometheus 'label_name="label_value"' pair in in_string
   output_config->prometheus_labels[output_config->num_prometheus_labels - 1] =
     in_string;
 }
@@ -184,7 +194,7 @@ void parse_command_line(int argc, char *const *argv,
                         "It should be between %d and %d.\n",
                         output_config->dht22_gpio_idx,
 			MIN_GPIO_INDEX, MAX_GPIO_INDEX);
-               exit(200);
+               exit(10);
 	}
         break;
       case 'w':
@@ -195,7 +205,7 @@ void parse_command_line(int argc, char *const *argv,
                         "The minimum allowable value is %d seconds.\n",
                         output_config->wait_seconds,
                         MIN_WAIT_SECONDS);
-               exit(200);
+               exit(11);
 	}
         break;
       case '?':
@@ -218,7 +228,7 @@ void parse_command_line(int argc, char *const *argv,
       }
 
   for (int index = optind; index < argc; index++)
-    check_prometheus_label(argv[index], output_config);
+    check_and_save_prometheus_label(argv[index], output_config);
 
 }
 
