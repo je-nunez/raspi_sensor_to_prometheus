@@ -10,6 +10,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
 
 #include "Raspberry_Pi_2/pi_2_dht_read.h"
@@ -93,6 +94,15 @@ int convert_str_to_int(const char * str) {
   return (int) value;
 }
 
+void report_errno_and_exit(int exit_code, const char * preffix_msg) {
+
+  int old_errno = errno;
+  char err_msg[256];
+  strerror_r(old_errno, err_msg, sizeof(err_msg));
+  fprintf(stderr, "%s: %d: %s", preffix_msg, old_errno, err_msg);
+  exit(exit_code);
+}
+
 void check_and_save_prometheus_label(char * in_string,
                               struct configuration_settings * output_config) {
 
@@ -164,12 +174,7 @@ void check_and_save_prometheus_label(char * in_string,
   }
 
   if (output_config->prometheus_labels == NULL) {
-    int old_errno = errno;
-    char err_msg[256];
-    strerror_r(old_errno, err_msg, sizeof(err_msg));
-    fprintf(stderr, "ERROR: while allocating memory in the heap: %d: %s",
-            old_errno, err_msg);
-    exit(9);
+    report_errno_and_exit(9, "ERROR: while allocating memory in the heap");
   }
   // finally, store the Prometheus 'label_name="label_value"' pair in in_string
   output_config->prometheus_labels[output_config->num_prometheus_labels - 1] =
@@ -257,10 +262,10 @@ void print_prometheus_labels(FILE *output,
   printf("}");
 }
 
-unsigned long long get_curr_epoch_microsec(void) {
+unsigned long long get_curr_epoch_microsec(clockid_t according_to_clock) {
 
   struct timespec curr_time;
-  clock_gettime(CLOCK_REALTIME, &curr_time);
+  clock_gettime(according_to_clock, &curr_time);
 
   unsigned long long epoch_microsec = (
             (unsigned long long)(curr_time.tv_sec) * 1000000 +
@@ -276,7 +281,8 @@ void dht22_values_to_prometheus(FILE *output,
 
   // https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details
 
-  unsigned long long epoch_millisec = get_curr_epoch_microsec() / 1000;
+  unsigned long long epoch_millisec =
+	  get_curr_epoch_microsec(CLOCK_REALTIME) / 1000;
 
   // print the relative humidity metric for Prometheus
   fprintf(output, "# TYPE dht22_relat_humidity gauge\n"
@@ -302,9 +308,67 @@ void dht22_values_to_prometheus(FILE *output,
   fprintf(output, " %.2f %llu\n", dht22_temp, epoch_millisec);
 }
 
-int main(int argc, char ** argv) {
+
+void sample_dht22_sensor_to_prometheus(
+                   const struct configuration_settings * config
+) {
 
   const int sensor_type = DHT22;
+
+  float temperature = 0, relative_humidity = 0;
+
+  /* Try to read humidity and temperature from the DHT22 sensor attached
+   * to the Raspberry Pi 2/3 at GPIO dht22_gpio_idx */
+
+  int err_code = pi_2_dht_read(sensor_type,
+      	                 config->dht22_gpio_idx,
+                         &relative_humidity, &temperature);
+
+  if (err_code != DHT_SUCCESS) {
+    fprintf(stderr, "ERROR: couldn't read DHT22 sensor data. Error: %d\n",
+            err_code);
+  } else {
+    dht22_values_to_prometheus(stdout, temperature, relative_humidity, config);
+  }
+}
+
+void do_main_loop(const struct configuration_settings * config) {
+
+  int timer_fd;    // The timer file descriptor (for timerfd_create())
+  struct itimerspec its;
+
+  /* create the file-descriptor's based timer */
+  timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
+  if (timer_fd == -1) {
+    report_errno_and_exit(12, "ERROR: while calling timerfd_create()");
+  }
+
+  its.it_value.tv_sec = 1;
+  its.it_value.tv_nsec = 0;
+  its.it_interval.tv_sec = config->wait_seconds;
+  its.it_interval.tv_nsec = 0;
+
+  if (timerfd_settime(timer_fd, 0, &its, NULL) == -1) {
+    report_errno_and_exit(13, "ERROR: while calling timerfd_settime()");
+  }
+
+  uint64_t missed = 1;
+
+  while (read(timer_fd, &missed, sizeof(missed)) != -1 && missed > 0) {
+    if (missed > 1) {
+      fprintf(stderr, "WARNING: the RHT03/DHT22 sampling code was slow enough "
+		      "as to miss %llu samples when sampling every %d seconds "
+		      "(use the '-w' command-line option to change sampling "
+		      "period)\n", missed, config->wait_seconds);
+    }
+    sample_dht22_sensor_to_prometheus(config);
+  }
+
+  close(timer_fd);
+}
+
+int main(int argc, char *argv[]) {
+
   struct configuration_settings actual_config = {
                                         .dht22_gpio_idx = DEFAULT_DHT_GPIO_IDX,
                                         .temperature_in_farenheit = false,
@@ -315,43 +379,5 @@ int main(int argc, char ** argv) {
 
   parse_command_line(argc, argv, &actual_config);
 
-  unsigned long long previous_end_epoch_microsec = get_curr_epoch_microsec();
-
-  float temperature = 0, relative_humidity = 0;
-
-  while (true) {
-
-    /* Try to read humidity and temperature from the DHT22 sensor attached
-     * to the Raspberry Pi 2/3 at GPIO dht22_gpio_idx */
-
-    int err_code = pi_2_dht_read(sensor_type,
-		                 actual_config.dht22_gpio_idx,
-                                 &relative_humidity, &temperature);
-
-    if (err_code != DHT_SUCCESS) {
-      fprintf(stderr, "ERROR: couldn't read DHT22 sensor data. Error: %d\n",
-              err_code);
-    } else {
-      dht22_values_to_prometheus(stdout,
-                                 temperature, relative_humidity,
-                                 &actual_config);
-    }
-
-    unsigned long long end_epoch_microsec = get_curr_epoch_microsec();
-    // USleep wait_seconds, substracting the time spent in the above loop
-    unsigned long long actual_usleep = (
-	             actual_config.wait_seconds * 1000000 -
-                         (end_epoch_microsec - previous_end_epoch_microsec)
-                   );
-    struct timespec sleep_request, sleep_remaining;
-    sleep_request.tv_sec = ( actual_usleep / 1000000 );
-    sleep_request.tv_nsec = ( actual_usleep % 1000000 ) * 1000;
-    nanosleep(&sleep_request, &sleep_remaining);
-    // Note: probably the implementation using a timer_create(2) and
-    // timer_settime(2) is better to establish this output of the metrics
-    // to Prometheus every wait_seconds, instead of using nanosleep().
-
-    previous_end_epoch_microsec = end_epoch_microsec;
-  }
-
+  do_main_loop(&actual_config);
 }
