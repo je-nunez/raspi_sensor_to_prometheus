@@ -17,6 +17,14 @@
 #include "common_dht_read.h"
 
 
+// The future release 0.16 of the Prometheus Node-Exporter (in Release
+// Candidates for the last two months of March-April 2018), does not
+// accept timestamps suffixes for its metric text-collector:
+//
+// https://github.com/prometheus/node_exporter/releases/tag/v0.16.0-rc.0
+// https://github.com/prometheus/node_exporter/pull/769
+#define PRINT_PROMETHEUS_TIMESTAMPS    false
+
 // Some defaults
 // The first one is a default GPIO index (for the mapping of GPIO indexes to
 // physical pin numbers see, e.g.,
@@ -281,8 +289,23 @@ void dht22_values_to_prometheus(FILE *output,
 
   // https://prometheus.io/docs/instrumenting/exposition_formats/#text-format-details
 
+  // this is the fprintf format string used to print the Prometheus metric
+  // values and suffixes after the metric value (like timestamps, if any)
+  char fprintf_format_str_metric_value_suffix[64];
+
+  // prepare the "fprintf_format_str_metric_value_suffix" according if this
+  // source code is compiled to print the timestamps for the Prometheus
+  // text-collector, or not to print the timestamps.
+#if PRINT_PROMETHEUS_TIMESTAMPS
   unsigned long long epoch_millisec =
 	  get_curr_epoch_microsec(CLOCK_REALTIME) / 1000;
+  snprintf(fprintf_format_str_metric_value_suffix,
+		  sizeof fprintf_format_str_metric_value_suffix,
+		  " %%.2f %llu\n", epoch_millisec);
+#else
+  strncpy(fprintf_format_str_metric_value_suffix, " %.2f\n",
+		  sizeof fprintf_format_str_metric_value_suffix);
+#endif
 
   // print the relative humidity metric for Prometheus
   fprintf(output, "# TYPE dht22_relat_humidity gauge\n"
@@ -290,7 +313,7 @@ void dht22_values_to_prometheus(FILE *output,
 		  "in the RHT03/DHT22 sensor\n"
                   "dht22_relat_humidity");
   print_prometheus_labels(output, config);
-  fprintf(output, " %.2f %llu\n", dht22_humidity, epoch_millisec);
+  fprintf(output, fprintf_format_str_metric_value_suffix, dht22_humidity);
 
   // print the temperature metric for Prometheus: deal with the case whether
   // report it in the original Celsius degrees, or to convert the Celsius to
@@ -305,7 +328,7 @@ void dht22_values_to_prometheus(FILE *output,
                   "%1$s",
                   temperature_metric_name);
   print_prometheus_labels(output, config);
-  fprintf(output, " %.2f %llu\n", dht22_temp, epoch_millisec);
+  fprintf(output, fprintf_format_str_metric_value_suffix, dht22_temp);
 }
 
 
