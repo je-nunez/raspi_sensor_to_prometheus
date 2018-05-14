@@ -31,7 +31,7 @@ The `-h` option will give a command-line usage:
           Take samples from a RHT03/DHT22 sensor attached to a Raspberry Pi 2/3 to the Prometheus monitoring system's text collector.
 
           Optional command-line arguments:
-             [-h] [-f] [-g gpio_idx] [-w wait_seconds] [prometheus_label="value"] ...
+             [-h] [-f] [-g gpio_idx] [-w wait_seconds] [-d directory] [prometheus_label="value"] ...
 
           Explanation of the optional command-line arguments:
 
@@ -39,6 +39,7 @@ The `-h` option will give a command-line usage:
                -f: report temperature in Fahrenheit degrees (default: Celsius).
                -g gpio_idx: the GPIO index by which this Raspberry Pi 2/3 communicates with the RHT03/DHT22 (default: 17).
                -w wait_seconds: seconds to wait between consecutive polls from the sensor (default: 60 seconds).
+               -d directory: directory where Prometheus' Text-Collector expects the sample metric files to read (default: /var/lib/node_exporter/textfile_collector).
                prometheus_label="value"...: Prometheus label="value" pairs with which to tag the output (default: none).
                                            (Note: Prometheus requires that the value of the label needs to be quoted between '"' double-quotes.
                                             These opening and closing quotes need to be given in the command-line argument.

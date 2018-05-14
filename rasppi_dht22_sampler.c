@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <linux/limits.h>
 #include <regex.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -39,12 +40,15 @@
 // ( https://learn.adafruit.com/dht/overview )
 #define MIN_WAIT_SECONDS   2
 
+#define PROMETHEUS_TEXT_COLL_FILE  "dht22.prom"
+#define PROMETHEUS_TEXT_COLL_DIR  "/var/lib/node_exporter/textfile_collector"
 
 // The type specifying the configuration settings for this program
 struct configuration_settings {
   int dht22_gpio_idx;
   bool temperature_in_farenheit;
   int wait_seconds;
+  char text_collector_fname[PATH_MAX+1];
   char ** prometheus_labels;
   int num_prometheus_labels;
 };
@@ -56,7 +60,7 @@ void show_help_and_exit(void) {
     "Take samples from a RHT03/DHT22 sensor attached to a Raspberry Pi 2/3 "
     "to the Prometheus monitoring system's text collector.\n\n"
     "Optional command-line arguments:\n"
-    "   [-h] [-f] [-g gpio_idx] [-w wait_seconds]"
+    "   [-h] [-f] [-g gpio_idx] [-w wait_seconds] [-d directory]"
       " [prometheus_label=\"value\"] ...\n"
     "\n"
     "Explanation of the optional command-line arguments:\n\n"
@@ -66,6 +70,8 @@ void show_help_and_exit(void) {
                       "communicates with the RHT03/DHT22 (default: %d).\n"
     "     -w wait_seconds: seconds to wait between consecutive polls from "
                           "the sensor (default: %d seconds).\n"
+    "     -d directory: directory where Prometheus' Text-Collector expects "
+                          "the sample metric files to read (default: %s).\n"
     "     prometheus_label=\"value\"...: Prometheus label=\"value\" pairs "
                           "with which to tag the output (default: none).\n"
     "                                 (Note: Prometheus requires that the "
@@ -76,7 +82,7 @@ void show_help_and_exit(void) {
     "                                  Probably, in a sh- or bash- like "
     "shell, the whole label=\"value\" needs to be protected thus:\n"
     "                                     'label=\"value\"'.)\n",
-    DEFAULT_DHT_GPIO_IDX, DEFAULT_WAIT_SECONDS
+    DEFAULT_DHT_GPIO_IDX, DEFAULT_WAIT_SECONDS, PROMETHEUS_TEXT_COLL_DIR
   );
   exit(0);
 }
@@ -194,7 +200,7 @@ void parse_command_line(int argc, char *const *argv,
 
   int c;
 
-  while ((c = getopt(argc, argv, "hfg:w:")) != -1)
+  while ((c = getopt(argc, argv, "hfg:w:d:")) != -1)
     switch (c)
       {
       case 'h':
@@ -225,6 +231,34 @@ void parse_command_line(int argc, char *const *argv,
                         MIN_WAIT_SECONDS);
                exit(11);
 	}
+        break;
+      case 'd':
+        ;
+        int size_dir = sizeof output_config->text_collector_fname;
+        strncpy(output_config->text_collector_fname, optarg, size_dir - 1);
+        output_config->text_collector_fname[size_dir - 1] = '\0';
+
+        int all_copied = strncmp(optarg, output_config->text_collector_fname,
+			         size_dir - 1);
+
+        if(all_copied != 0) {
+               fprintf (stderr,
+                        "ERROR: Directory specified in '-d' option is "
+                        "too long. Its max length allowable is: %d.\n",
+                        size_dir - 1);
+               exit(12);
+	}
+        int str_len = strlen(output_config->text_collector_fname);
+        if (size_dir - str_len < strlen("/" PROMETHEUS_TEXT_COLL_FILE)) {
+               fprintf (stderr,
+                        "ERROR: Directory specified in '-d' option is too "
+                        "long: it must leave space for other %d characters.\n",
+                        strlen("/" PROMETHEUS_TEXT_COLL_FILE));
+               exit(13);
+	} else
+          strncat(output_config->text_collector_fname,
+		  "/" PROMETHEUS_TEXT_COLL_FILE,
+		  size_dir - 1);
         break;
       case '?':
         if (optopt == 'g')
@@ -331,6 +365,25 @@ void dht22_values_to_prometheus(FILE *output,
   fprintf(output, fprintf_format_str_metric_value_suffix, dht22_temp);
 }
 
+FILE * create_temporary_filename(char * temp_fname,
+		                 const char * fname_prefix
+) {
+  int size_fname = PATH_MAX+1;
+  strncpy(temp_fname, fname_prefix, size_fname - 1);
+  strncat(temp_fname, ".XXXXXX", size_fname - 1);
+  int fd = mkstemp(temp_fname);
+  if (fd != -1) {
+    FILE* fp = fdopen(fd, "w");
+    return fp;
+  } else {
+    int old_errno = errno;
+    char err_msg[256];
+    strerror_r(old_errno, err_msg, sizeof err_msg);
+    fprintf(stderr, "WARNING: Could not create temporary file '%s': %d: %s",
+		    temp_fname, old_errno, err_msg);
+    return NULL;
+  }
+}
 
 void sample_dht22_sensor_to_prometheus(
                    const struct configuration_settings * config
@@ -351,7 +404,35 @@ void sample_dht22_sensor_to_prometheus(
     fprintf(stderr, "ERROR: couldn't read DHT22 sensor data. Error: %d\n",
             err_code);
   } else {
-    dht22_values_to_prometheus(stdout, temperature, relative_humidity, config);
+    char text_collector_temp_fname[PATH_MAX+1];
+    FILE * text_collector_file = create_temporary_filename(
+		                       text_collector_temp_fname,
+                                       config->text_collector_fname
+				 );
+    int could_create_file = ( text_collector_file != NULL );
+    if (! could_create_file) text_collector_file = stdout;
+
+    dht22_values_to_prometheus(text_collector_file,
+		    temperature, relative_humidity,
+		    config);
+
+    if (could_create_file) {    // if it is not stdout, then:
+      fclose(text_collector_file);
+      // Prometheus' Text-Collector requires to atomically create and fill
+      // the text file with the metric values, and this is why the use of the
+      // temporary filename, and its final rename() here
+      fprintf(stderr, "DEBUG: renaming '%s' to '%s'...\n",
+	      text_collector_temp_fname, config->text_collector_fname);
+      int result = rename(text_collector_temp_fname,
+	                  config->text_collector_fname);
+      if (result == -1) {
+        int old_errno = errno;
+        char err_msg[256];
+        strerror_r(old_errno, err_msg, sizeof err_msg);
+        fprintf(stderr, "WARNING: Could not rename files: %d: %s",
+		old_errno, err_msg);
+      }
+    }
   }
 }
 
@@ -363,7 +444,7 @@ void do_main_loop(const struct configuration_settings * config) {
   /* create the file-descriptor's based timer */
   timer_fd = timerfd_create(CLOCK_MONOTONIC, 0);
   if (timer_fd == -1) {
-    report_errno_and_exit(12, "ERROR: while calling timerfd_create()");
+    report_errno_and_exit(14, "ERROR: while calling timerfd_create()");
   }
 
   its.it_value.tv_sec = 1;
@@ -372,7 +453,7 @@ void do_main_loop(const struct configuration_settings * config) {
   its.it_interval.tv_nsec = 0;
 
   if (timerfd_settime(timer_fd, 0, &its, NULL) == -1) {
-    report_errno_and_exit(13, "ERROR: while calling timerfd_settime()");
+    report_errno_and_exit(15, "ERROR: while calling timerfd_settime()");
   }
 
   uint64_t missed = 1;
@@ -396,6 +477,10 @@ int main(int argc, char *argv[]) {
                                         .dht22_gpio_idx = DEFAULT_DHT_GPIO_IDX,
                                         .temperature_in_farenheit = false,
                                         .wait_seconds = DEFAULT_WAIT_SECONDS,
+                                        .text_collector_fname =
+				                   PROMETHEUS_TEXT_COLL_DIR
+						   "/"
+						   PROMETHEUS_TEXT_COLL_FILE,
                                         .prometheus_labels = NULL,
                                         .num_prometheus_labels = 0
                                       };
