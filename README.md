@@ -46,6 +46,8 @@ The `-h` option will give a command-line usage:
                                             Probably, in a sh- or bash- like shell, the whole label="value" needs to be protected thus:
                                                'label="value"'.)
 
+The option `-d directory` for this program must match the option `--collector.textfile.directory directory` for the Prometheus' node-exporter running in the Raspberry Pi 2/3.
+
 When the `-f` command-line option is used, the Prometheus metric reported is `dht22_temperature_farenheit` (and not the default `dht22_temperature_celsius`, which is how the RHT03/DHT22 originally reports its sample of the temperature).
 
 For example:

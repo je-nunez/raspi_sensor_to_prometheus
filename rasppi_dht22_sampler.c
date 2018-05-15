@@ -113,7 +113,7 @@ void report_errno_and_exit(int exit_code, const char * preffix_msg) {
   int old_errno = errno;
   char err_msg[256];
   strerror_r(old_errno, err_msg, sizeof(err_msg));
-  fprintf(stderr, "%s: %d: %s", preffix_msg, old_errno, err_msg);
+  fprintf(stderr, "%s: %d: %s\n", preffix_msg, old_errno, err_msg);
   exit(exit_code);
 }
 
@@ -379,7 +379,8 @@ FILE * create_temporary_filename(char * temp_fname,
     int old_errno = errno;
     char err_msg[256];
     strerror_r(old_errno, err_msg, sizeof err_msg);
-    fprintf(stderr, "WARNING: Could not create temporary file '%s': %d: %s",
+    fprintf(stderr, "WARNING: Could not create temporary file '%s': %d: %s.\n"
+		    "         Discarding this sample to Prometheus.\n",
 		    temp_fname, old_errno, err_msg);
     return NULL;
   }
@@ -429,7 +430,7 @@ void sample_dht22_sensor_to_prometheus(
         int old_errno = errno;
         char err_msg[256];
         strerror_r(old_errno, err_msg, sizeof err_msg);
-        fprintf(stderr, "WARNING: Could not rename files: %d: %s",
+        fprintf(stderr, "WARNING: Could not rename files: %d: %s\n",
 		old_errno, err_msg);
       }
     }
